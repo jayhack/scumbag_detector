@@ -122,24 +122,27 @@ int main( int argc, char** argv ) {
 
 	/*### Step 0: set up displays for debugging ###*/
 	namedWindow ("image", CV_WINDOW_AUTOSIZE);
-	// namedWindow ("tmplate", CV_WINDOW_AUTOSIZE);
-	// namedWindow ("mask", CV_WINDOW_AUTOSIZE);
-	// namedWindow ("output", CV_WINDOW_AUTOSIZE);
-	// namedWindow ("difference", CV_WINDOW_AUTOSIZE);
 
 	/*### Step 1: load the hat template ###*/
 	Mat tmplate;
 	tmplate = imread (tmplate_filename, CV_LOAD_IMAGE_COLOR);
-	// tmplate = Mat (Size(100, 100), CV_8UC3, Scalar(0, 0, 0));
+	if (! tmplate.data) {
+		cout << "Error: could not load the template" << endl;
+		return 0;
+	}
 
 
 	/*### Step 2: load the image to test ###*/
-	Mat image;
 	if (argc <= 1) {
 		cout << "Error: specify an image file to search";
 		return 0;
 	}
+	Mat image;
 	image = imread(argv[1], CV_LOAD_IMAGE_COLOR);
+	if (! image.data) {
+		cout << "Error: could not load the image" << endl;
+		return 0;
+	}
 
 
 	/*### Step 3: downsample both so that they are pretty damn small ###*/
