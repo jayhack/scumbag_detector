@@ -10,8 +10,8 @@ using namespace std;
 using namespace cv;
 
 #define DIMENSION_UPPER_BOUND 200
-#define TEMPLATE_LOWER_BOUND 65
-#define TEMPLATE_UPPER_BOUND 105
+#define TEMPLATE_LOWER_BOUND (DIMENSION_UPPER_BOUND * 0.1)
+#define TEMPLATE_UPPER_BOUND (DIMENSION_UPPER_BOUND * 0.4)
 char *tmplate_filename = "scumbag_hat.png";
 
 
@@ -79,53 +79,11 @@ void scale_template_and_mask (Mat tmplate, Mat& tmplate_resized, Mat mask, Mat& 
  */
 double calculate_match (Mat image, Point start_coords, Mat tmplate, Mat mask) {
 
-	Rect location_rect = Rect(start_coords, Point(start_coords.x + tmplate.cols, start_coords.y + tmplate.rows));
-	Mat location = image(location_rect).clone ();
-	Mat location_modified;
-	multiply (location, mask, location_modified);
-	Mat output;
-	matchTemplate (location_modified, tmplate, output, CV_TM_SQDIFF);
-	// cout << "output = " << output.at<double>(0, 0) << endl;
-	return output.at<double>(0, 0);
-
-
-	int num_channels = image.channels ();
-
- 	/*### Step 1: get direct element access ###*/
-	uint8_t* image_start = image.data + num_channels*(start_coords.y*image.cols + start_coords.x);
-	uint8_t* tmplate_start = tmplate.data;
-	uint8_t* mask_start = mask.data;
-
- 	double total_diff = 0;
-
- 	for (int i=0;i<tmplate.rows;i++) {
- 		for (int j=0;j<tmplate.cols;j++) {
-
- 			uint8_t* image_loc 		= image_start 	+ num_channels*j;
- 			uint8_t* tmplate_loc 	= tmplate_start + num_channels*j;
- 			uint8_t* mask_loc 		= mask_start 	+ num_channels*j;
-
- 			double pix_diff = 0;
- 			/*note: assumes color image here!*/
- 			// if (*mask_loc > 0) {
- 				uint8_t b_diff = (*(image_loc + 0) - *(tmplate_loc + 0));
- 				uint8_t g_diff = (*(image_loc + 1) - *(tmplate_loc + 1));
- 				uint8_t r_diff = (*(image_loc + 2) - *(tmplate_loc + 2));
-
- 				pix_diff = b_diff*b_diff + g_diff*g_diff + r_diff*r_diff;
- 			// }
-
-
- 			total_diff += pix_diff;
- 		}
-
- 		image_start 		+= num_channels*image.cols;
- 		tmplate_start 		+= num_channels*tmplate.cols;
- 		mask_start 			+= num_channels*mask.cols;
- 	}
-
- 	return total_diff;
- }
+	Rect roi_rect = Rect(start_coords, Point(start_coords.x + tmplate.cols, start_coords.y + tmplate.rows));	
+	Mat difference, final, temp;
+	Mat masked_input = image(roi_rect).mul(mask);
+	return norm (masked_input, tmplate, NORM_L2);	
+}
 
 
 
@@ -153,8 +111,7 @@ double calculate_match (Mat image, Point start_coords, Mat tmplate, Mat mask) {
 	for (int i=0;i<scan_height;i++) {
 		for (int j=0;j<scan_width;j++) {
 			/*--- perform scan at this location ---*/
-			double match_val = calculate_match (image, Point (j, i), tmplate, mask);
-			output.at<double>(i, j) = match_val;
+			output.at<double>(i, j) = calculate_match (image, Point (j, i), tmplate, mask);
 		}
 	}
 
@@ -165,9 +122,10 @@ int main( int argc, char** argv ) {
 
 	/*### Step 0: set up displays for debugging ###*/
 	namedWindow ("image", CV_WINDOW_AUTOSIZE);
-	namedWindow ("tmplate", CV_WINDOW_AUTOSIZE);
-	namedWindow ("mask", CV_WINDOW_AUTOSIZE);
-	namedWindow ("output", CV_WINDOW_AUTOSIZE);
+	// namedWindow ("tmplate", CV_WINDOW_AUTOSIZE);
+	// namedWindow ("mask", CV_WINDOW_AUTOSIZE);
+	// namedWindow ("output", CV_WINDOW_AUTOSIZE);
+	// namedWindow ("difference", CV_WINDOW_AUTOSIZE);
 
 	/*### Step 1: load the hat template ###*/
 	Mat tmplate;
@@ -182,36 +140,35 @@ int main( int argc, char** argv ) {
 		return 0;
 	}
 	image = imread(argv[1], CV_LOAD_IMAGE_COLOR);
-	// image = Mat (Size(200, 200), CV_8UC3, Scalar(255, 255, 255));
-	// circle (image, Point (100, 100), 30, Scalar (0, 0, 255), 2, 8, 0);
-	// tmplate = image(Rect (Point (150, 50), Point (190, 90)) ).clone ();
 
 
 	/*### Step 3: downsample both so that they are pretty damn small ###*/
 	float scale_factor = get_scale_factor (image.cols, image.rows, DIMENSION_UPPER_BOUND);
 	resize (image, image, Size(0, 0), scale_factor, scale_factor);
 
+
 	/*### Step 4: get the mask for template matching ###*/
 	Mat mask;
 	create_mask (tmplate, mask);
 
-	/*### Step 4: iterate over all the possible sizes of the hat and to pattern matching ###*/
+
+	/*### Step 5: iterate over all the possible sizes of the hat and to pattern matching ###*/
+	double all_time_best = 10000;
+	Rect best_rect;
 	for (int i=TEMPLATE_LOWER_BOUND;i<TEMPLATE_UPPER_BOUND;i++) {
 
 		/*--- resize template, mask ---*/
 		Mat tmplate_resized, mask_resized;
 		scale_template_and_mask (tmplate, tmplate_resized, mask, mask_resized, i);
-		cout << "---> tmplate_resized: " << tmplate_resized.cols << ", " << tmplate_resized.rows << endl;
-
 
 
 		/*--- do template matching ---*/
 		Mat output;
 		match_template_with_mask (image, tmplate_resized, mask_resized, output);
-		// match_template_with_mask (image, tmplate, mask, output);
 		// matchTemplate (image, tmplate, output, CV_TM_SQDIFF);
 
-		// --- if the output is small, break the loop ---
+
+		/* --- if the output is small, break the loop ---*/
 		if ((output.rows <= 1) || (output.cols <= 1)) 
 			break;
 
@@ -221,45 +178,26 @@ int main( int argc, char** argv ) {
 		Point min_loc, max_loc;
 		minMaxLoc (output, &min_val, &max_val, &min_loc, &max_loc);
 
-		/*--- draw best fit on the image ---*/
-		Mat image_clone = image.clone ();
-		cout << "### MATCH STATS: ###" << endl;
-		cout << "- min_val = " << min_val << endl;
-		cout << "- min_val (x, y) = " << min_loc.x << ", " << min_loc.y << endl;
-		cout << "- max_val = " << max_val << endl;
 
+		int tmplate_pixels = tmplate_resized.cols * tmplate_resized.rows;
+		min_val = min_val / tmplate_pixels;
 
-		rectangle(image_clone, min_loc, Point(min_loc.x + tmplate_resized.cols, min_loc.y + tmplate_resized.rows), Scalar(255, 0, 0), 2, 8, 0);
-		// rectangle (image_clone, min_loc, Point(min_loc.x + tmplate.cols, min_loc.y + tmplate.rows), Scalar(255, 0, 0), 2, 8, 0);
-
-
-		show_images (image_clone, tmplate_resized, mask_resized, output);
-		// show_images(image_clone, tmplate, mask, output);
-
-
-
-		// double min_val, max_val;
-		// Point min_loc, max_loc;
-		// minMaxLoc (output, &min_val, &max_val, &min_loc, &max_loc);
-
-
-		// rectangle(image_clone, max_loc, Point(max_loc.x + scumbag_hat_resized.cols, max_loc.y + scumbag_hat_resized.rows), Scalar(0, 0, 255), 1, 8, 0);
-
-		// cout << " - min val = " << min_val;
-		// cout << ", max_val = " << max_val << endl;
-
-		// imshow ("DISPLAY", scumbag_hat_);
-		// int key = 0;
-		// while (key != 'q')
-			// key = waitKey(30);
+		if (min_val < all_time_best) {
+			all_time_best = min_val;
+			best_rect = Rect(min_loc, Point(min_loc.x + tmplate_resized.cols, min_loc.y + tmplate_resized.rows));
+		}
 
 
 	}
 
-
-
-
-
+	/*--- display info about the best fit ---*/
+	Mat image_clone = image.clone ();
+	rectangle(image_clone, best_rect, Scalar(255, 0, 0), 2, 8, 0);
+	cout << "all time best: " << all_time_best << endl;
+	imshow ("image", image_clone);
+	int key = 0;
+	while (key != 'q') 
+		key = waitKey (30); 
 
 
 
